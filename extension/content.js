@@ -3,11 +3,19 @@
 (function() {
   'use strict';
 
-  // Store found videos
-  let foundVideos = new Map();
+  // Cache for scan results
+  let cachedVideos = null;
+  let cacheValid = false;
+  let lastScanTime = 0;
+  const MIN_SCAN_INTERVAL = 2000; // Minimum 2 seconds between scans
+  let debounceTimeout = null; // Moved from window to closure scope
 
   // Extract MP4 URLs from various sources
-  function findMP4Videos() {
+  function findMP4Videos(forceRefresh = false) {
+    // Return cached results if valid and not forcing refresh
+    if (!forceRefresh && cacheValid && cachedVideos) {
+      return cachedVideos;
+    }
     const videos = [];
     const seenUrls = new Set();
 
@@ -114,7 +122,15 @@
       }
     });
 
+    // Update cache
+    cachedVideos = videos;
+    cacheValid = true;
     return videos;
+  }
+
+  // Invalidate cache when DOM changes
+  function invalidateCache() {
+    cacheValid = false;
   }
 
   // Check if URL looks like an MP4 file
@@ -173,14 +189,14 @@
   // Listen for messages from popup
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'getVideos') {
-      const allVideos = findMP4Videos();
+      // Force refresh when popup requests videos
+      const allVideos = findMP4Videos(true);
       const filteredVideos = filterFullVideos(allVideos);
 
-      // Add page info
+      // Add page info (only title, not full URL for privacy)
       const response = {
         videos: filteredVideos,
-        pageTitle: document.title,
-        pageUrl: window.location.href
+        pageTitle: document.title
       };
 
       sendResponse(response);
@@ -190,13 +206,19 @@
     return true;
   });
 
-  // Also notify background script of any videos found (for badge updates)
+  // Notify background script of video count (with throttling)
   function notifyBackground() {
+    const now = Date.now();
+    // Throttle: skip if called too recently
+    if (now - lastScanTime < MIN_SCAN_INTERVAL) {
+      return;
+    }
+    lastScanTime = now;
+
     const videos = filterFullVideos(findMP4Videos());
     chrome.runtime.sendMessage({
       action: 'videosFound',
-      count: videos.length,
-      tabUrl: window.location.href
+      count: videos.length
     }).catch(() => {
       // Ignore errors if background isn't ready
     });
@@ -209,7 +231,7 @@
     window.addEventListener('load', notifyBackground);
   }
 
-  // Also watch for dynamic content changes
+  // Watch for dynamic content changes (optimized)
   const observer = new MutationObserver((mutations) => {
     let hasNewVideo = false;
     for (const mutation of mutations) {
@@ -226,14 +248,19 @@
     }
 
     if (hasNewVideo) {
-      // Debounce the notification
-      clearTimeout(window._videoGrabberTimeout);
-      window._videoGrabberTimeout = setTimeout(notifyBackground, 500);
+      // Invalidate cache when new video elements detected
+      invalidateCache();
+      // Debounce the notification (using closure-scoped variable)
+      clearTimeout(debounceTimeout);
+      debounceTimeout = setTimeout(notifyBackground, 500);
     }
   });
 
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true
-  });
+  // Only observe if document.body exists
+  if (document.body) {
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+  }
 })();
