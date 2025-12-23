@@ -50,24 +50,32 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Display the list of found videos
+  // Display the list of found videos (parallel thumbnail generation)
   async function displayVideos(videos) {
-    for (const video of videos) {
-      const videoItem = await createVideoItem(video);
-      videoListEl.appendChild(videoItem);
-    }
+    // Limit thumbnails to first 10 videos for performance
+    const MAX_THUMBNAILS = 10;
+
+    // Process all videos in parallel
+    const videoItems = await Promise.all(
+      videos.map((video, index) => createVideoItem(video, index < MAX_THUMBNAILS))
+    );
+
+    // Append all items to DOM
+    videoItems.forEach(item => videoListEl.appendChild(item));
   }
 
   // Create a video item element with thumbnail
-  async function createVideoItem(video) {
+  async function createVideoItem(video, generateThumb = true) {
     const item = document.createElement('div');
     item.className = 'video-item';
 
     const thumbnailContainer = document.createElement('div');
     thumbnailContainer.className = 'thumbnail-container';
 
-    // Try to generate thumbnail
-    const thumbnailResult = await generateThumbnail(video.url);
+    // Try to generate thumbnail (skip for performance if generateThumb is false)
+    const thumbnailResult = generateThumb
+      ? await generateThumbnail(video.url)
+      : { success: false };
 
     if (thumbnailResult.success) {
       const img = document.createElement('img');
@@ -276,11 +284,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Generate a filename from page title and timestamp
   function generateFilename(pageTitle) {
-    // Clean the page title
-    let cleanTitle = pageTitle
-      .replace(/[<>:"/\\|?*]/g, '') // Remove invalid chars
-      .replace(/\s+/g, '_')         // Replace spaces with underscores
-      .substring(0, 50);            // Limit length
+    // Clean the page title with robust sanitization
+    let cleanTitle = (pageTitle || '')
+      .replace(/\.\./g, '')           // Prevent path traversal
+      .replace(/\x00/g, '')           // Remove null bytes
+      .replace(/[<>:"/\\|?*]/g, '')   // Remove invalid filesystem chars
+      .replace(/^\.+/, '')            // Remove leading dots
+      .replace(/\s+/g, '_')           // Replace spaces with underscores
+      .normalize('NFC');              // Normalize unicode
+
+    // Safe substring for multi-byte characters
+    cleanTitle = [...cleanTitle].slice(0, 50).join('');
 
     if (!cleanTitle) {
       cleanTitle = 'video';

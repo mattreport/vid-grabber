@@ -1,13 +1,15 @@
 {
   "manifest_version": 3,
   "name": "MP4 Video Grabber",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Detect and download MP4 videos from any webpage",
   "permissions": [
     "activeTab",
-    "downloads",
-    "storage"
+    "downloads"
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'"
+  },
   "host_permissions": [
     "<all_urls>"
   ],
